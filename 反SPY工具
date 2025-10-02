@@ -1,0 +1,253 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local KICK_MESSAGE = "安全违规: 检测到未经授权的调试工具"
+
+-- 高级模式匹配检测函数
+local function advancedSpyDetection()
+    -- 检测CoreGui中的各种SimpleSpy变体
+    for _, child in pairs(CoreGui:GetChildren()) do
+        local name = child.Name:lower()
+        
+        -- 精确匹配SimpleSpy的各种命名模式
+        if name:match("^simplespy%d*$") or 
+           name:match("^spy%d*$") or
+           name:match("^simplespy2$") or
+           name:match("^remotespy$") or
+           name:match("^function%.spy") or
+           name:match("^remote%.analyzer") then
+            return true, "CoreGui检测到间谍工具: " .. child.Name
+        end
+        
+        -- 检测具有特定结构的GUI
+        if child:IsA("ScreenGui") then
+            local background = child:FindFirstChild("Background")
+            local topBar = child:FindFirstChild("TopBar")
+            local leftPanel = child:FindFirstChild("LeftPanel")
+            local rightPanel = child:FindFirstChild("RightPanel")
+            
+            -- 检测SimpleSpy的特定UI结构
+            if background and topBar and leftPanel and rightPanel then
+                local simple = topBar:FindFirstChild("Simple")
+                if simple and simple:IsA("TextButton") and simple.Text:match("SimpleSpy") then
+                    return true, "检测到SimpleSpy UI结构"
+                end
+            end
+        end
+    end
+    
+    -- 检测全局变量中的间谍工具特征
+    if _G.SimpleSpyExecuted ~= nil then
+        return true, "检测到SimpleSpy执行标志"
+    end
+    
+    if type(_G.SimpleSpyShutdown) == "function" then
+        return true, "检测到SimpleSpy关闭函数"
+    end
+    
+    if _G.SimpleSpy and type(_G.SimpleSpy) == "table" then
+        -- 检查SimpleSpy API函数
+        local apiFunctions = {"ArgsToString", "TableToVars", "ValueToVar", "ValueToString", "GetFunctionInfo"}
+        for _, funcName in ipairs(apiFunctions) do
+            if _G.SimpleSpy[funcName] and type(_G.SimpleSpy[funcName]) == "function" then
+                return true, "检测到SimpleSpy API函数: " .. funcName
+            end
+        end
+    end
+    
+    -- 检测特定的元表钩子
+    if getrawmetatable and type(getrawmetatable) == "function" then
+        local gm = getrawmetatable(game)
+        if gm and rawget(gm, "__namecall") then
+            local namecall = rawget(gm, "__namecall")
+            if namecall and tostring(namecall):find("newcclosure") then
+                return true, "检测到可疑的元表钩子"
+            end
+        end
+    end
+    
+    -- 检测远程事件钩子
+    if hookfunction and type(hookfunction) == "function" then
+        local remoteEvent = Instance.new("RemoteEvent")
+        local originalFire = remoteEvent.FireServer
+        if debug.info(originalFire, "s") ~= debug.info(remoteEvent.FireServer, "s") then
+            return true, "检测到远程事件钩子"
+        end
+        remoteEvent:Destroy()
+    end
+    
+    -- 检测隐藏的间谍工具（通过特征码）
+    for _, guiObject in pairs(CoreGui:GetDescendants()) do
+        if guiObject:IsA("TextButton") and guiObject.Text:match("SimpleSpy") then
+            return true, "检测到SimpleSpy按钮"
+        end
+        
+        -- 检测特定的颜色模式（SimpleSpy的主题色）
+        if guiObject:IsA("Frame") then
+            local bgColor = guiObject.BackgroundColor3
+            if (bgColor == Color3.fromRGB(53, 52, 55) or  -- 左面板颜色
+                bgColor == Color3.fromRGB(37, 36, 38) or  -- 右面板颜色
+                bgColor == Color3.fromRGB(37, 35, 38)) then -- 顶部栏颜色
+                -- 检查是否具有SimpleSpy的特定结构
+                local parent = guiObject.Parent
+                if parent and parent:FindFirstChild("LogList") then
+                    return true, "检测到SimpleSpy颜色主题和结构"
+                end
+            end
+        end
+    end
+    
+    -- 检测特定的脚本模式
+    for _, script in pairs(CoreGui:GetDescendants()) do
+        if script:IsA("ModuleScript") or script:IsA("LocalScript") then
+            local source = script.Source
+            if source and type(source) == "string" then
+                -- 检测SimpleSpy的特征代码片段
+                if source:find("SimpleSpy") and 
+                   (source:find("remoteEvent") or source:find("remoteFunction") or source:find("hookfunction")) then
+                    return true, "检测到间谍工具脚本"
+                end
+                
+                -- 检测特定的函数模式
+                if source:find("v2s") and source:find("t2s") and source:find("i2p") then
+                    return true, "检测到SimpleSpy序列化函数"
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+-- 行为检测（检测间谍工具的运行时行为）
+local function behavioralDetection()
+    -- 检测异常的远程事件监控
+    local remoteCount = 0
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            remoteCount = remoteCount + 1
+            if remoteCount > 50 then  -- 异常数量的远程监控
+                return true, "检测到异常的远程监控行为"
+            end
+        end
+    end
+    
+    -- 检测内存使用模式
+    local memory = collectgarbage("count")
+    if memory > 50000 then  -- 如果内存使用异常高
+        return true, "检测到异常内存使用模式"
+    end
+    
+    return false
+end
+
+-- 网络流量检测
+local function networkDetection()
+    -- 检测异常的数据包监控
+    local stats = game:GetService("Stats")
+    local network = stats:FindFirstChild("Network")
+    
+    if network then
+        local inbound = network:FindFirstChild("IncomingReplication")
+        if inbound and inbound:IsA("IntValue") and inbound.Value > 1000000 then
+            return true, "检测到异常网络流量监控"
+        end
+    end
+    
+    return false
+end
+
+-- 主检测函数
+local function performComprehensiveCheck()
+    local detected, reason = advancedSpyDetection()
+    if detected then
+        return true, reason
+    end
+    
+    detected, reason = behavioralDetection()
+    if detected then
+        return true, reason
+    end
+    
+    detected, reason = networkDetection()
+    if detected then
+        return true, reason
+    end
+    
+    return false
+end
+
+-- 实时监控CoreGui的变化
+local function monitorCoreGui()
+    CoreGui.ChildAdded:Connect(function(child)
+        wait(0.2)  -- 等待对象完全加载
+        local detected, reason = performComprehensiveCheck()
+        if detected then
+            warn("安全警报: " .. reason)
+            LocalPlayer:Kick(KICK_MESSAGE)
+        end
+    end)
+    
+    CoreGui.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("ScreenGui") or descendant:IsA("Frame") or descendant:IsA("TextButton") then
+            wait(0.1)
+            local name = descendant.Name:lower()
+            if name:match("spy") or name:match("simple") then
+                local detected, reason = performComprehensiveCheck()
+                if detected then
+                    warn("安全警报: " .. reason)
+                    LocalPlayer:Kick(KICK_MESSAGE)
+                end
+            end
+        end
+    end)
+end
+
+-- 定期安全扫描
+local scanCooldown = 0
+RunService.Heartbeat:Connect(function(deltaTime)
+    scanCooldown = scanCooldown + deltaTime
+    if scanCooldown > 5 then  -- 每5秒执行一次全面扫描
+        local detected, reason = performComprehensiveCheck()
+        if detected then
+            warn("定期安全扫描检测到威胁: " .. reason)
+            LocalPlayer:Kick(KICK_MESSAGE)
+        end
+        scanCooldown = 0
+    end
+end)
+
+-- 启动时立即执行一次检测
+local function initialScan()
+    wait(3)  -- 等待游戏完全加载
+    local detected, reason = performComprehensiveCheck()
+    if detected then
+        warn("启动扫描检测到威胁: " .. reason)
+        LocalPlayer:Kick(KICK_MESSAGE)
+    end
+end
+
+-- 初始化监控
+monitorCoreGui()
+coroutine.wrap(initialScan)()
+
+-- 防篡改保护
+local originalKick = LocalPlayer.Kick
+LocalPlayer.Kick = function(self, message)
+    if message == KICK_MESSAGE then
+        return originalKick(self, message)
+    else
+        -- 检测是否有人试图篡改踢出功能
+        warn("检测到踢出功能篡改尝试")
+        return originalKick(self, KICK_MESSAGE)
+    end
+end
+
+-- 隐藏检测痕迹（可选）
+getgenv().SimpleSpyExecuted = nil
+getgenv().SimpleSpyShutdown = nil
+
+warn("高级安全系统已启动 - SimpleSpy检测器运行中")
